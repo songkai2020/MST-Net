@@ -1,2 +1,2 @@
-# MST-Net
-MST-Net for single-photon single-pixel imaging.
+# Deep Physical Priors Enhanced Single-Photon Single-Pixel Imaging
+Code for Deep Physical Priors Enhanced Single-Photon Single-Pixel Imaging
