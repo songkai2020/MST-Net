@@ -7,8 +7,8 @@ import gc
 import random
 
 
-def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, illum_intensity, dead_time, env_noise,
-                             detection_efficiency, dark_count,post_pulse_prob, data_save_path,resolution:int = None):
+def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, illum_intensity, dead_time, amb_noise_modulate,
+                               amb_noise_wo_modulate,detection_efficiency, dark_count,post_pulse_prob, data_save_path,resolution:int = None):
 
     '''
     :param data_path: The path of target images.
@@ -17,7 +17,8 @@ def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, il
     :param time_res: Resolution of timeline.
     :param illum_intensity:  Illumination intensity of light source.
     :param dead_time: Dead time of the detector.
-    :param env_noise: Environmental noise level.
+    :param amb_noise_modulate: Ambient noise level from modulated path(A  proportion (0-1) of total intensity).
+    :param amb_noise_wo_modulate: Ambient noise level direct detected(Expected count per second accounts for detection efficiency).
     :param detection_efficiency: Detection efficiency of detector.
     :param dark_count: Dark count of the detector.
     :param post_pulse_prob: Post_pulse probility of detector.
@@ -26,11 +27,14 @@ def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, il
     :return:
     '''
 
-    # Calculate the length of the timeline for each pattern.
+    # Calculate the number of time bin in the timeline corresponding to each pattern.
     Time_single_pattern = 1/DMD_frame_rate
     Time_sq_len = int(Time_single_pattern*(1/time_res))
 
-    # Probability of dark event.
+    # Probability coefficient of ambient event without modulation.
+    Amb_wo_mod_prob = amb_noise_wo_modulate / (1 / time_res)
+
+    # Probability coefficient of dark event.
     dark_prob = dark_count/(1/dead_time)
 
     # Preprocess of dead time noise.
@@ -56,33 +60,37 @@ def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, il
             img = np.transpose(img)
 
             # The total intensity of object.
-            total_intensity = 0
-            for i in range(W):
-                for j in range(H):
-                    total_intensity += img[i][j]
+            total_intensity = 255*H*W
 
             # Calculate the probability of signal photon.
             img = img * illum_intensity # Adjust illumination intensity.
+
+            if np.sum(img)>=total_intensity:
+                print("Excessive light intensity leads to detector saturation!")
+                break
+
             img = np.reshape(img, (W * H, 1))
             intensity = np.matmul(patterns, img)
             avg_intensity = sum(intensity)/patterns.shape[0]
-            Obj_prob = (intensity+env_noise*avg_intensity)/ total_intensity
+            Obj_prob = (intensity+amb_noise_modulate*avg_intensity)/ total_intensity
+
+            Obj_prob = np.clip(Obj_prob, 0, 1)
+            Obj_prob = Obj_prob*detection_efficiency
 
             photon_count = []
             for m in range(len(Obj_prob)):
                 # Signal Timeline
                 Signal_sq = np.random.choice([0, 1], size=(Time_sq_len), p=[1 - Obj_prob[m][0], Obj_prob[m][0]])
 
-                # Detection efficiency
-                for n in range(Time_sq_len):
-                    if Signal_sq[n] == 1:
-                        Signal_sq[n] = 1 if random.random() < detection_efficiency else 0
+                # Ambient noise without modulation Timeline
+                Amb_wo_mod = np.random.choice([0, 1], size=(Time_sq_len), p=[1 - Amb_wo_mod_prob, Amb_wo_mod_prob])
 
                 # Dark count Timeline
                 Dark_count = np.random.choice([0, 1], size=(Time_sq_len), p=[1 - dark_prob, dark_prob])
 
-                #Merge timelines (Signal + Dark count)
-                Temp_sq = [1 if a == 1 and b == 1 else a + b for a, b in zip(Signal_sq, Dark_count)]
+
+                #Merge timelines (Signal + Dark count + Amb_wo_mod)
+                Temp_sq = [min(a + b + c, 1) for a, b, c in zip(Signal_sq, Amb_wo_mod, Dark_count)]
 
                 #Post-pulsing noise
                 for n in range(Time_sq_len-1):
@@ -114,18 +122,20 @@ def Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, il
 
 if __name__ == '__main__':
 
-    data_path = r'C:\Users\ASUS\Desktop\GT_res'
-    pattern_path = r'C:\Users\ASUS\Desktop\patterns\m_256_001.csv'
+    data_path = 'Path of target images'
+    pattern_path = 'Pattern matrix path'
     patterns = pd.read_csv(pattern_path, header=None).to_numpy()
     DMD_frame_rate = 10
-    time_res = 0.0000001
-    illum_intensity = 1
-    dead_time = 0.000005
-    env_noise = 0.1
+    time_res = 0.00001
+    illum_intensity = 1.5
+    dead_time = 0.00005
+    amb_noise_mod = 0.01
+    amb_noise_wo_mod = 500
     detection_efficiency = 0.7
     dark_count= 500
     post_pulse_prob =0.05
-    data_save_path = r'C:\Users\ASUS\Desktop\CSV'
+    data_save_path = 'Save path of measurements'
 
     Physical_noise_prior_model(data_path, patterns, DMD_frame_rate, time_res, illum_intensity, dead_time,
-                             env_noise,detection_efficiency, dark_count, post_pulse_prob, data_save_path)
+                               amb_noise_mod, amb_noise_wo_mod, detection_efficiency, dark_count, post_pulse_prob,
+                               data_save_path)
